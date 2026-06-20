@@ -15,8 +15,8 @@ local FRAME_IN = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection
 local FRAME_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FRAME_FROM = 0.86
 
-local HOVER_ID = "rbxasset://sounds/electronicpingshort.wav"
-local CLICK_ID = "rbxasset://sounds/electronicpingshort.wav"
+local HOVER_ID = "rbxassetid://6972108033"
+local CLICK_ID = "rbxassetid://6042053626"
 
 local hoverSfx, clickSfx
 local function ensureSounds()
@@ -28,9 +28,9 @@ local function ensureSounds()
 		folder.Parent = SoundService
 	end
 	hoverSfx = Instance.new("Sound")
-	hoverSfx.Name = "Hover"; hoverSfx.SoundId = HOVER_ID; hoverSfx.Volume = 0.12; hoverSfx.PlaybackSpeed = 1.7; hoverSfx.Parent = folder
+	hoverSfx.Name = "Hover"; hoverSfx.SoundId = HOVER_ID; hoverSfx.Volume = 0.25; hoverSfx.PlaybackSpeed = 1; hoverSfx.Parent = folder
 	clickSfx = Instance.new("Sound")
-	clickSfx.Name = "Click"; clickSfx.SoundId = CLICK_ID; clickSfx.Volume = 0.35; clickSfx.PlaybackSpeed = 1.05; clickSfx.Parent = folder
+	clickSfx.Name = "Click"; clickSfx.SoundId = CLICK_ID; clickSfx.Volume = 0.4; clickSfx.PlaybackSpeed = 1; clickSfx.Parent = folder
 end
 
 local function ensureScale(gui)

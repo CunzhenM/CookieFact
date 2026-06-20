@@ -40,7 +40,7 @@ local catalogButtons = {}
 
 local function setOpen(open)
 	panel.Visible = open
-	buildToggle.Visible = not open
+	buildToggle.Visible = false
 	if not open then
 		PlacementController.exit()
 	end
@@ -119,6 +119,7 @@ function PlacementHud.Start()
 	buildToggle.AnchorPoint = Vector2.new(0, 1)
 	buildToggle.Position = UDim2.new(0, 18, 1, -18)
 	buildToggle.Parent = gui
+	buildToggle.Visible = false
 	buildToggle.Activated:Connect(function()
 		setOpen(true)
 	end)
@@ -224,6 +225,14 @@ function PlacementHud.Start()
 	PlacementController.ModeChanged:Connect(refresh)
 	PlacementController.ResultChanged:Connect(showToast)
 	refresh("none", nil)
+end
+
+function PlacementHud.toggle()
+	setOpen(not panel.Visible)
+end
+
+function PlacementHud.setOpen(open)
+	setOpen(open)
 end
 
 return PlacementHud

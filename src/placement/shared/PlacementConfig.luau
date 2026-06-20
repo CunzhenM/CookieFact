@@ -40,7 +40,9 @@ PlacementConfig.Remotes = {
 	Buy = "RequestBuyMachine",
 	Result = "PlacementResult",
 
-	LookCamera = "LookCamera",}
+	LookCamera = "LookCamera",
+	OpenShop = "OpenMachineShop",
+	ShopError = "MachineShopError",}
 
 PlacementConfig.FactoryLine = {
 	{ id = "Receiving", label = "Receiving & Storage", step = 1, cost = 0, color = Color3.fromRGB(180, 185, 195), size = Vector3.new(10, 12, 10) },
