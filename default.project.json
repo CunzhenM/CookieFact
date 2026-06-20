@@ -21,6 +21,9 @@
       },
       "PlacementSystem": {
         "$path": "src/placement/server"
+      },
+      "PlacementOverrides": {
+        "$path": "src/placement/PlacementOverrides.server.luau"
       }
     },
 
