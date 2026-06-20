@@ -15,14 +15,17 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local DragConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DragConfig"))
+local ConveyorFlow = require(script.Parent:WaitForChild("ConveyorFlow"))
 
 local FauxPhysics = {}
 
+local BELT_TAG = DragConfig.ConveyorBeltTag
+local CONVEY_SPEED = 4 -- studs/sec a belt carries a resting faux body (matches server ConveyorService)
 local SKIN = 0.05 -- small gap kept from surfaces to avoid clipping
 local MAX_STEP = 1 / 30 -- clamp dt so a frame hitch can't tunnel the body through the floor
 local KILL_Y = -500 -- give up simulating anything that falls into the void
 
-type Body = { velocity: Vector3, grounded: boolean, gravityScale: number }
+type Body = { velocity: Vector3, grounded: boolean, gravityScale: number, conveying: boolean? }
 local bodies: { [Instance]: Body } = {}
 
 -- Callbacks fired (with the root) the moment a body settles and goes to sleep.
@@ -118,6 +121,20 @@ local function stickToSurface(root: Instance, center: Vector3, size: Vector3, mo
 	root:PivotTo(pivotR + n * ((halfThickness + SKIN) - distCentre))
 end
 
+-- The ConveyorBelt-tagged part directly under a resting body (or nil). Lets a settled faux
+-- body keep riding a belt instead of sleeping. Uses the belts' own bounds, so it never snags
+-- on the non-collidable Direction markers above the belt.
+local function beltUnder(root: Instance): BasePart?
+	local cf, size = getBox(root)
+	local boxCF = cf * CFrame.new(0, -size.Y / 2, 0)
+	local boxSize = Vector3.new(math.max(size.X * 0.5, 1), 1.2, math.max(size.Z * 0.5, 1))
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = CollectionService:GetTagged(BELT_TAG)
+	local hits = Workspace:GetPartBoundsInBox(boxCF, boxSize, params)
+	return hits[1]
+end
+
 local function step(root: Instance, body: Body, dt: number)
 	if not root.Parent then
 		bodies[root] = nil
@@ -129,6 +146,23 @@ local function step(root: Instance, body: Body, dt: number)
 	if center.Y < KILL_Y then
 		bodies[root] = nil
 		return
+	end
+
+	-- Resting on a conveyor belt: ride it along the flow instead of sleeping. It only settles
+	-- (and fires OnRest -> baking) once it rolls off the belt onto something else (next belt / oven).
+	if body.conveying then
+		local belt = beltUnder(root)
+		if belt then
+			local flow = ConveyorFlow.getFlowDirection(belt, center)
+			local delta = Vector3.new(flow.X, 0, flow.Z) * CONVEY_SPEED * dt
+			if delta.Magnitude > 1e-6 then
+				root:PivotTo(root:GetPivot() + delta)
+			end
+			return
+		end
+		-- Rolled off the belt: drop back into gravity so it settles on whatever comes next.
+		body.conveying = false
+		body.velocity = Vector3.zero
 	end
 
 	-- Integrate gravity (matches the engine, optionally lightened) and a touch of air drag.
@@ -145,6 +179,12 @@ local function step(root: Instance, body: Body, dt: number)
 	if result then
 		-- First collidable thing it touches: align flush to that surface and stick.
 		stickToSurface(root, center, size, move, result)
+		-- Landed on a belt? Start conveying instead of sleeping (and don't bake yet).
+		if CollectionService:HasTag(result.Instance, BELT_TAG) or beltUnder(root) then
+			body.conveying = true
+			body.velocity = Vector3.zero
+			return
+		end
 		bodies[root] = nil
 		for _, cb in ipairs(restCallbacks) do
 			task.spawn(cb, root)
