@@ -1,0 +1,424 @@
+--!strict
+-- Authoritative grid placement, scoped to the player's OWN plot (from PlotService). Because
+-- every action uses getPlot(player) as the build area, a player can only ever place/delete on
+-- their own plot. Each plot holds its placed machines in a child folder; occupancy is tracked
+-- per plot and cleared when the plot is freed.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
+
+local Shared = ReplicatedStorage:WaitForChild("PlacementShared")
+local PlacementConfig = require(Shared:WaitForChild("PlacementConfig"))
+local GridUtil = require(Shared:WaitForChild("GridUtil"))
+local BuildAnimation = require(Shared:WaitForChild("BuildAnimation"))
+local PlotService = require(script.Parent:WaitForChild("PlotService"))
+
+local PlacementService = {}
+local occupied = {}
+
+local Currency = nil
+local function resolveCurrency()
+	local serverScript = ServerScriptService:FindFirstChild("Server")
+	local mod = serverScript and serverScript:FindFirstChild("CurrencyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, result = pcall(require, mod)
+		if ok and type(result) == "table" then
+			Currency = result
+			return
+		end
+	end
+	warn("[PlacementSystem] CurrencyService not found -- placement runs free, no payouts.")
+end
+
+local function charge(player, amount, reason)
+	if not (PlacementConfig.ChargeForPlacement and amount > 0) then
+		return true
+	end
+	if Currency and Currency.TrySpend then
+		return Currency.TrySpend(player, amount, reason) == true
+	end
+	return true
+end
+
+local function refund(player, amount, reason)
+	if amount > 0 and Currency and Currency.Add then
+		Currency.Add(player, amount, reason)
+	end
+end
+
+local function placedFolder(plot)
+	local f = plot:FindFirstChild(PlacementConfig.PlacedFolderName)
+	if f and f:IsA("Folder") then
+		return f
+	end
+	f = Instance.new("Folder")
+	f.Name = PlacementConfig.PlacedFolderName
+	f.Parent = plot
+	return f
+end
+
+-- Raw cookie dough that feeds the factory line. Cloned from the Workspace "CookieDough" template
+-- (a Model of anchored pieces, simulated as one rigid body by the client FauxPhysics module). It
+-- carries the Dough + Draggable tags so the player can drag it onto the oven, where CookingService
+-- bakes it into a Cookie. Falls back to a simple dough ball if the template is missing.
+local function makeDough()
+	local tmpl = Workspace:FindFirstChild("CookieDough")
+	local d
+	if tmpl and (tmpl:IsA("Model") or tmpl:IsA("BasePart")) then
+		d = tmpl:Clone()
+	else
+		local p = Instance.new("Part")
+		p.Shape = Enum.PartType.Ball
+		p.Size = Vector3.new(1.8, 1.3, 1.8)
+		p.Color = Color3.fromRGB(222, 184, 135)
+		p.Material = Enum.Material.SmoothPlastic
+		p.Anchored = false
+		p.CanCollide = true
+		d = p
+	end
+	d.Name = "CookieDough"
+	-- The template already has these, but guarantee the pipeline tags on the fallback / any clone.
+	CollectionService:AddTag(d, PlacementConfig.DoughTag or "Dough")
+	CollectionService:AddTag(d, "Draggable")
+	return d
+end
+
+local function setupDropper(model, box)
+	local spout = Instance.new("Part")
+	spout.Name = "Spout"
+	spout.Anchored = true
+	spout.CanCollide = false
+	spout.Material = Enum.Material.Neon
+	spout.Color = Color3.fromRGB(222, 184, 135)
+	spout.Size = Vector3.new(1.6, 1.4, 1.6)
+	spout.CFrame = box.CFrame * CFrame.new(box.Size.X / 2 + 0.6, 0, 0)
+	local light = Instance.new("PointLight")
+	light.Color = spout.Color
+	light.Brightness = 3
+	light.Range = 9
+	light.Parent = spout
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromScale(5, 1.2)
+	bb.StudsOffsetWorldSpace = Vector3.new(0, 2, 0)
+	bb.MaxDistance = 60
+	bb.Parent = spout
+	local hint = Instance.new("TextLabel")
+	hint.Size = UDim2.fromScale(1, 1)
+	hint.BackgroundTransparency = 1
+	hint.Font = Enum.Font.GothamBold
+	hint.TextColor3 = Color3.new(1, 1, 1)
+	hint.TextStrokeTransparency = 0.4
+	hint.TextScaled = true
+	hint.Text = "Click to drop dough!"
+	hint.Parent = bb
+	spout.Parent = model
+
+	local click = Instance.new("ClickDetector")
+	click.MaxActivationDistance = 24
+	click.Parent = spout
+	local lastDrop = 0
+	click.MouseClick:Connect(function(player)
+		if model:GetAttribute("OwnerUserId") ~= player.UserId then
+			return
+		end
+		local now = os.clock()
+		if now - lastDrop < 0.25 then
+			return
+		end
+		lastDrop = now
+		local folder = Workspace:FindFirstChild("DroppedDough")
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = "DroppedDough"
+			folder.Parent = Workspace
+		end
+		local dough = makeDough()
+		-- Drop it at the mouth of the spout; the client FauxPhysics sim (real engine for the part
+		-- fallback) makes it fall. No server-side velocity: the dough Model is anchored by design.
+		local dropCF = spout.CFrame * CFrame.new(1.0, -0.4, 0)
+		if dough:IsA("Model") then
+			dough:PivotTo(dropCF)
+		else
+			dough.CFrame = dropCF
+			dough.AssemblyLinearVelocity = box.CFrame.RightVector * 4 + Vector3.new(0, 4, 0)
+		end
+		dough.Parent = folder
+		Debris:AddItem(dough, 45)
+	end)
+end
+
+local function buildMachineVisual(machine)
+	local models = Shared:FindFirstChild("MachineModels")
+	local template = models and models:FindFirstChild(machine.id)
+	if template and template:IsA("Model") then
+		local clone = template:Clone()
+		-- Keep the model's OWN collision setup. Conveyor Direction markers sit above the belt and
+		-- are CanCollide=false on purpose -- forcing them true makes cookies snag. Only anchor.
+		for _, d in ipairs(clone:GetDescendants()) do
+			if d:IsA("BasePart") then
+				d.Anchored = true
+			end
+		end
+		return clone
+	end
+
+	local part = Instance.new("Part")
+	part.Name = machine.id
+	part.Anchored = true
+	part.CanCollide = true
+	part.Material = Enum.Material.SmoothPlastic
+	part.Color = machine.color
+	-- Fill the footprint exactly so adjacent machines sit flush (no gaps).
+	part.Size = Vector3.new(
+		machine.footprint[1] * PlacementConfig.CellSize,
+		machine.height,
+		machine.footprint[2] * PlacementConfig.CellSize
+	)
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromScale(6, 1.6)
+	bb.StudsOffsetWorldSpace = Vector3.new(0, machine.height / 2 + 1, 0)
+	bb.MaxDistance = 120
+	bb.Parent = part
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextColor3 = Color3.new(1, 1, 1)
+	lbl.TextStrokeTransparency = 0.5
+	lbl.TextScaled = true
+	lbl.Text = machine.label
+	lbl.Parent = bb
+
+	if machine.id == "DoughDropper" then
+		local model = Instance.new("Model")
+		model.Name = machine.id
+		part.Parent = model
+		model.PrimaryPart = part
+		setupDropper(model, part)
+		return model
+	end
+	return part
+end
+
+-- Belt-top height above the plot surface. Conveyor belts are aligned to exactly this so straights
+-- and corners are perfectly coplanar. Models without a belt rest their bbox bottom on the surface.
+local CONVEYOR_BELT_HEIGHT = 2.5
+
+local function findConveyorBelt(container)
+	for _, d in ipairs(container:GetDescendants()) do
+		if d:IsA("BasePart") and CollectionService:HasTag(d, "ConveyorBelt") then
+			return d
+		end
+	end
+	return nil
+end
+
+local function seatModelOnSurface(container, surfaceTop)
+	local belt = findConveyorBelt(container)
+	if belt then
+		local dy = (surfaceTop + CONVEYOR_BELT_HEIGHT) - (belt.Position.Y + belt.Size.Y / 2)
+		container:PivotTo(container:GetPivot() + Vector3.new(0, dy, 0))
+	else
+		local boxCF, boxSize = container:GetBoundingBox()
+		local dy = surfaceTop - (boxCF.Position.Y - boxSize.Y / 2)
+		container:PivotTo(container:GetPivot() + Vector3.new(0, dy, 0))
+	end
+end
+
+-- Corner belt models (Left/RightConveyor) are built off-center inside their tile: the belt pad and
+-- its turn markers are offset from the model's bounding-box center, and that bbox center is what
+-- PivotTo snaps to the cell center (these models have no PrimaryPart). So the belt -- and the point
+-- where the next piece should attach -- lands off-grid, and rotating the piece swings the belt around
+-- the cell. Feeding INTO a corner still looks fine (its entry arm overhangs back toward the feeder),
+-- but continuing a straight off a corner's EXIT leaves a gap. Fix: after seating, shift the model in
+-- XZ so the BELT pad centers on the cell. Rotation baked into the placement CFrame is preserved.
+-- No-op for straights (belt already centered) and non-conveyors (no tagged belt).
+local function centerBeltOnCell(container, cellCF)
+	local belt = findConveyorBelt(container)
+	if not belt then
+		return
+	end
+	local bp = belt.Position
+	local dx = cellCF.Position.X - bp.X
+	local dz = cellCF.Position.Z - bp.Z
+	if math.abs(dx) > 1e-3 or math.abs(dz) > 1e-3 then
+		container:PivotTo(container:GetPivot() + Vector3.new(dx, 0, dz))
+	end
+end
+
+local function positionContainer(container, cf)
+	if container:IsA("Model") then
+		container:PivotTo(cf)
+	else
+		container.CFrame = cf
+	end
+end
+
+function PlacementService.tryPlace(player, machineId, cx, cz, rot, skipCharge)
+	local plot = PlotService.getPlot(player)
+	if not plot then
+		return false, "You have no plot yet"
+	end
+	local machine = PlacementConfig.getMachine(machineId)
+	if not machine then
+		return false, "Unknown machine"
+	end
+	rot = math.floor(tonumber(rot) or 0) % 4
+	cx = math.floor(tonumber(cx) or -1)
+	cz = math.floor(tonumber(cz) or -1)
+
+	local efpx, efpz = GridUtil.rotatedFootprint(machine.footprint[1], machine.footprint[2], rot)
+	if not GridUtil.inBounds(plot, cx, cz, efpx, efpz) then
+		return false, "Outside your plot"
+	end
+	local occ = occupied[plot]
+	if not occ then
+		occ = {}
+		occupied[plot] = occ
+	end
+	local keys = GridUtil.occupiedKeys(cx, cz, efpx, efpz)
+	for _, k in ipairs(keys) do
+		if occ[k] then
+			return false, "Space occupied"
+		end
+	end
+
+	if not skipCharge and not charge(player, machine.cost or 0, "place:" .. machineId) then
+		return false, "Not enough Coins"
+	end
+
+	local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, machine.height, rot)
+	local container = buildMachineVisual(machine)
+	positionContainer(container, cf)
+	-- Seat the model so every conveyor belt top is coplanar (per-model config height differs --
+	-- straight 3.0 vs corners 2.8 -- which otherwise leaves a lip a cookie catches on corner->straight).
+	if container:IsA("Model") then
+		seatModelOnSurface(container, plot.Position.Y + plot.Size.Y / 2)
+		-- Center the belt pad on the cell so corners line up with straights on every side / rotation.
+		centerBeltOnCell(container, cf)
+	end
+	container:SetAttribute("MachineId", machineId)
+	container:SetAttribute("OwnerUserId", player.UserId)
+	container:SetAttribute("CostPaid", (PlacementConfig.ChargeForPlacement and machine.cost) or 0)
+	container:SetAttribute("CellX", cx)
+	container:SetAttribute("CellZ", cz)
+	container:SetAttribute("Rot", rot)
+	container.Parent = placedFolder(plot)
+	for _, k in ipairs(keys) do
+		occ[k] = container
+	end
+	BuildAnimation.play(container)
+	return true, "ok"
+end
+
+function PlacementService.tryDelete(player, target)
+	local plot = PlotService.getPlot(player)
+	if not plot then
+		return false, "You have no plot yet"
+	end
+	local placed = placedFolder(plot)
+	if typeof(target) ~= "Instance" then
+		return false, "Invalid target"
+	end
+	local container = target
+	while container and container.Parent ~= placed do
+		container = container.Parent
+	end
+	if not container then
+		return false, "Not on your plot"
+	end
+	local occ = occupied[plot]
+	if occ then
+		for k, v in pairs(occ) do
+			if v == container then
+				occ[k] = nil
+			end
+		end
+	end
+	local paid = container:GetAttribute("CostPaid") or 0
+	refund(player, math.floor(paid * PlacementConfig.RefundFraction), "refund:" .. tostring(container:GetAttribute("MachineId")))
+	container:Destroy()
+	return true, "ok"
+end
+
+function PlacementService.getPlacements(player)
+	local out = {}
+	local plot = PlotService.getPlot(player)
+	local folder = plot and plot:FindFirstChild(PlacementConfig.PlacedFolderName)
+	if not folder then
+		return out
+	end
+	for _, c in ipairs(folder:GetChildren()) do
+		local id = c:GetAttribute("MachineId")
+		if type(id) == "string" then
+			table.insert(out, {
+				id = id,
+				cx = c:GetAttribute("CellX") or 0,
+				cz = c:GetAttribute("CellZ") or 0,
+				rot = c:GetAttribute("Rot") or 0,
+			})
+		end
+	end
+	return out
+end
+
+function PlacementService.restore(player, list)
+	if type(list) ~= "table" then
+		return
+	end
+	for _, e in ipairs(list) do
+		if type(e) == "table" and type(e.id) == "string" then
+			PlacementService.tryPlace(player, e.id, e.cx or 0, e.cz or 0, e.rot or 0, true)
+		end
+	end
+end
+
+function PlacementService.Start()
+	resolveCurrency()
+
+	PlotService.PlotReleased:Connect(function(plot)
+		occupied[plot] = nil
+		local placed = plot:FindFirstChild(PlacementConfig.PlacedFolderName)
+		if placed then
+			placed:ClearAllChildren()
+		end
+	end)
+
+	local folder = ReplicatedStorage:FindFirstChild(PlacementConfig.RemotesFolderName)
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = PlacementConfig.RemotesFolderName
+		folder.Parent = ReplicatedStorage
+	end
+	local function ensure(name)
+		local r = folder:FindFirstChild(name)
+		if not r then
+			r = Instance.new("RemoteEvent")
+			r.Name = name
+			r.Parent = folder
+		end
+		return r
+	end
+	local R = PlacementConfig.Remotes
+	local placeR = ensure(R.Place)
+	local deleteR = ensure(R.Delete)
+	local resultR = ensure(R.Result)
+
+	placeR.OnServerEvent:Connect(function(player, machineId, cx, cz, rot)
+		if type(machineId) ~= "string" then
+			return
+		end
+		local ok, reason = PlacementService.tryPlace(player, machineId, cx, cz, rot)
+		resultR:FireClient(player, ok, reason, machineId)
+	end)
+
+	deleteR.OnServerEvent:Connect(function(player, target)
+		local ok, reason = PlacementService.tryDelete(player, target)
+		resultR:FireClient(player, ok, reason, "delete")
+	end)
+end
+
+return PlacementService

@@ -6,12 +6,21 @@
     "ReplicatedStorage": {
       "Shared": {
         "$path": "src/shared"
+      },
+      "PlacementShared": {
+        "$className": "Folder",
+        "PlacementConfig": { "$path": "src/placement/shared/PlacementConfig.luau" },
+        "GridUtil": { "$path": "src/placement/shared/GridUtil.luau" },
+        "BuildAnimation": { "$path": "src/placement/shared/BuildAnimation.luau" }
       }
     },
 
     "ServerScriptService": {
       "Server": {
         "$path": "src/server"
+      },
+      "PlacementSystem": {
+        "$path": "src/placement/server"
       }
     },
 
@@ -19,6 +28,9 @@
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
+        },
+        "PlacementClient": {
+          "$path": "src/placement/client"
         }
       }
     },
