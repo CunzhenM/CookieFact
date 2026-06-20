@@ -1,8 +1,6 @@
 --!strict
--- Authoritative grid placement, scoped to the player's OWN plot (from PlotService). Because
--- every action uses getPlot(player) as the build area, a player can only ever place/delete on
--- their own plot. Each plot holds its placed machines in a child folder; occupancy is tracked
--- per plot and cleared when the plot is freed.
+-- Authoritative grid placement, scoped to the player's OWN plot (from PlotService). A player can only
+-- ever place/delete on their own plot. Placed machines live in a child folder; occupancy per plot.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -60,10 +58,33 @@ local function placedFolder(plot)
 	return f
 end
 
--- Raw cookie dough that feeds the factory line. Cloned from the Workspace "CookieDough" template
--- (a Model of anchored pieces, simulated as one rigid body by the client FauxPhysics module). It
--- carries the Dough + Draggable tags so the player can drag it onto the oven, where CookingService
--- bakes it into a Cookie. Falls back to a simple dough ball if the template is missing.
+local function makeCookie()
+	local tmpl = Workspace:FindFirstChild("Cookie")
+	local c
+	if tmpl and tmpl:IsA("BasePart") then
+		c = tmpl:Clone()
+		for _, ch in ipairs(c:GetChildren()) do
+			if ch:IsA("JointInstance") or ch:IsA("WeldConstraint") then
+				ch:Destroy()
+			end
+		end
+	else
+		local p = Instance.new("Part")
+		p.Shape = Enum.PartType.Cylinder
+		p.Size = Vector3.new(0.5, 1.6, 1.6)
+		p.Color = Color3.fromRGB(170, 110, 60)
+		p.Material = Enum.Material.SmoothPlastic
+		c = p
+	end
+	c.Name = "Cookie"
+	c.Anchored = false
+	c.CanCollide = true
+	CollectionService:AddTag(c, "Draggable")
+	return c
+end
+
+-- Raw cookie dough that feeds the factory line: a Dough+Draggable clone of the Workspace "CookieDough"
+-- template (a Model the client FauxPhysics sim drops/carries). Falls back to a simple ball.
 local function makeDough()
 	local tmpl = Workspace:FindFirstChild("CookieDough")
 	local d
@@ -80,45 +101,40 @@ local function makeDough()
 		d = p
 	end
 	d.Name = "CookieDough"
-	-- The template already has these, but guarantee the pipeline tags on the fallback / any clone.
-	CollectionService:AddTag(d, PlacementConfig.DoughTag or "Dough")
+	CollectionService:AddTag(d, "Dough")
 	CollectionService:AddTag(d, "Draggable")
 	return d
 end
 
-local function setupDropper(model, box)
-	local spout = Instance.new("Part")
-	spout.Name = "Spout"
-	spout.Anchored = true
-	spout.CanCollide = false
-	spout.Material = Enum.Material.Neon
-	spout.Color = Color3.fromRGB(222, 184, 135)
-	spout.Size = Vector3.new(1.6, 1.4, 1.6)
-	spout.CFrame = box.CFrame * CFrame.new(box.Size.X / 2 + 0.6, 0, 0)
-	local light = Instance.new("PointLight")
-	light.Color = spout.Color
-	light.Brightness = 3
-	light.Range = 9
-	light.Parent = spout
-	local bb = Instance.new("BillboardGui")
-	bb.Size = UDim2.fromScale(5, 1.2)
-	bb.StudsOffsetWorldSpace = Vector3.new(0, 2, 0)
-	bb.MaxDistance = 60
-	bb.Parent = spout
-	local hint = Instance.new("TextLabel")
-	hint.Size = UDim2.fromScale(1, 1)
-	hint.BackgroundTransparency = 1
-	hint.Font = Enum.Font.GothamBold
-	hint.TextColor3 = Color3.new(1, 1, 1)
-	hint.TextStrokeTransparency = 0.4
-	hint.TextScaled = true
-	hint.Text = "Click to drop dough!"
-	hint.Parent = bb
-	spout.Parent = model
-
-	local click = Instance.new("ClickDetector")
+-- Wire the dropper's glowing Spout (placed in the editable DoughDropper template; built as a fallback
+-- if missing) so the OWNER can click it to drop a cookie. OwnerUserId is stamped by tryPlace.
+local function setupDropper(model)
+	local spout = model:FindFirstChild("Spout", true)
+	if not spout then
+		local body = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+		if not body then
+			return
+		end
+		local p = Instance.new("Part")
+		p.Name = "Spout"
+		p.Anchored = true
+		p.CanCollide = false
+		p.Material = Enum.Material.Neon
+		p.Color = Color3.fromRGB(255, 190, 70)
+		p.Size = Vector3.new(1.6, 1.4, 1.6)
+		p.CFrame = body.CFrame * CFrame.new(body.Size.X / 2 + 0.6, 0, 0)
+		local light = Instance.new("PointLight")
+		light.Color = p.Color
+		light.Brightness = 3
+		light.Range = 9
+		light.Parent = p
+		p.Parent = model
+		spout = p
+	end
+	local s = spout
+	local click = s:FindFirstChildWhichIsA("ClickDetector") or Instance.new("ClickDetector")
 	click.MaxActivationDistance = 24
-	click.Parent = spout
+	click.Parent = s
 	local lastDrop = 0
 	click.MouseClick:Connect(function(player)
 		if model:GetAttribute("OwnerUserId") ~= player.UserId then
@@ -136,31 +152,33 @@ local function setupDropper(model, box)
 			folder.Parent = Workspace
 		end
 		local dough = makeDough()
-		-- Drop it at the mouth of the spout; the client FauxPhysics sim (real engine for the part
-		-- fallback) makes it fall. No server-side velocity: the dough Model is anchored by design.
-		local dropCF = spout.CFrame * CFrame.new(1.0, -0.4, 0)
+		local dropCF = s.CFrame * CFrame.new(1.2, 0, 0)
 		if dough:IsA("Model") then
 			dough:PivotTo(dropCF)
 		else
 			dough.CFrame = dropCF
-			dough.AssemblyLinearVelocity = box.CFrame.RightVector * 4 + Vector3.new(0, 4, 0)
+			dough.AssemblyLinearVelocity = s.CFrame.RightVector * 4 + Vector3.new(0, 4, 0)
 		end
 		dough.Parent = folder
 		Debris:AddItem(dough, 45)
 	end)
 end
 
+-- Clone the editable template for this machine (MachineModels.<id>); fall back to a placeholder box.
 local function buildMachineVisual(machine)
 	local models = Shared:FindFirstChild("MachineModels")
 	local template = models and models:FindFirstChild(machine.id)
 	if template and template:IsA("Model") then
 		local clone = template:Clone()
-		-- Keep the model's OWN collision setup. Conveyor Direction markers sit above the belt and
-		-- are CanCollide=false on purpose -- forcing them true makes cookies snag. Only anchor.
+		-- Keep the model's OWN collision setup (conveyor Direction markers are CanCollide=false on
+		-- purpose); just guarantee parts are anchored so a placed machine can't be shoved around.
 		for _, d in ipairs(clone:GetDescendants()) do
 			if d:IsA("BasePart") then
 				d.Anchored = true
 			end
+		end
+		if machine.id == "DoughDropper" then
+			setupDropper(clone)
 		end
 		return clone
 	end
@@ -171,12 +189,7 @@ local function buildMachineVisual(machine)
 	part.CanCollide = true
 	part.Material = Enum.Material.SmoothPlastic
 	part.Color = machine.color
-	-- Fill the footprint exactly so adjacent machines sit flush (no gaps).
-	part.Size = Vector3.new(
-		machine.footprint[1] * PlacementConfig.CellSize,
-		machine.height,
-		machine.footprint[2] * PlacementConfig.CellSize
-	)
+	part.Size = Vector3.new(machine.footprint[1] * PlacementConfig.CellSize, machine.height, machine.footprint[2] * PlacementConfig.CellSize)
 	local bb = Instance.new("BillboardGui")
 	bb.Size = UDim2.fromScale(6, 1.6)
 	bb.StudsOffsetWorldSpace = Vector3.new(0, machine.height / 2 + 1, 0)
@@ -197,14 +210,12 @@ local function buildMachineVisual(machine)
 		model.Name = machine.id
 		part.Parent = model
 		model.PrimaryPart = part
-		setupDropper(model, part)
+		setupDropper(model)
 		return model
 	end
 	return part
 end
 
--- Belt-top height above the plot surface. Conveyor belts are aligned to exactly this so straights
--- and corners are perfectly coplanar. Models without a belt rest their bbox bottom on the surface.
 local CONVEYOR_BELT_HEIGHT = 2.5
 
 local function findConveyorBelt(container)
@@ -228,14 +239,9 @@ local function seatModelOnSurface(container, surfaceTop)
 	end
 end
 
--- Corner belt models (Left/RightConveyor) are built off-center inside their tile: the belt pad and
--- its turn markers are offset from the model's bounding-box center, and that bbox center is what
--- PivotTo snaps to the cell center (these models have no PrimaryPart). So the belt -- and the point
--- where the next piece should attach -- lands off-grid, and rotating the piece swings the belt around
--- the cell. Feeding INTO a corner still looks fine (its entry arm overhangs back toward the feeder),
--- but continuing a straight off a corner's EXIT leaves a gap. Fix: after seating, shift the model in
--- XZ so the BELT pad centers on the cell. Rotation baked into the placement CFrame is preserved.
--- No-op for straights (belt already centered) and non-conveyors (no tagged belt).
+-- Conveyor belt models can be built off-center within their tile (corners especially), so snapping the
+-- model's pivot to the cell center leaves the belt -- and the spot the next piece attaches to -- off-grid.
+-- After seating, shift the model in XZ so the BELT pad centers on the cell. No-op for straights / non-belts.
 local function centerBeltOnCell(container, cellCF)
 	local belt = findConveyorBelt(container)
 	if not belt then
@@ -293,11 +299,8 @@ function PlacementService.tryPlace(player, machineId, cx, cz, rot, skipCharge)
 	local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, machine.height, rot)
 	local container = buildMachineVisual(machine)
 	positionContainer(container, cf)
-	-- Seat the model so every conveyor belt top is coplanar (per-model config height differs --
-	-- straight 3.0 vs corners 2.8 -- which otherwise leaves a lip a cookie catches on corner->straight).
 	if container:IsA("Model") then
 		seatModelOnSurface(container, plot.Position.Y + plot.Size.Y / 2)
-		-- Center the belt pad on the cell so corners line up with straights on every side / rotation.
 		centerBeltOnCell(container, cf)
 	end
 	container:SetAttribute("MachineId", machineId)
@@ -354,12 +357,7 @@ function PlacementService.getPlacements(player)
 	for _, c in ipairs(folder:GetChildren()) do
 		local id = c:GetAttribute("MachineId")
 		if type(id) == "string" then
-			table.insert(out, {
-				id = id,
-				cx = c:GetAttribute("CellX") or 0,
-				cz = c:GetAttribute("CellZ") or 0,
-				rot = c:GetAttribute("Rot") or 0,
-			})
+			table.insert(out, { id = id, cx = c:GetAttribute("CellX") or 0, cz = c:GetAttribute("CellZ") or 0, rot = c:GetAttribute("Rot") or 0 })
 		end
 	end
 	return out
