@@ -7,6 +7,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Workspace = game:GetService("Workspace")
 local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
 
 local Shared = ReplicatedStorage:WaitForChild("PlacementShared")
 local PlacementConfig = require(Shared:WaitForChild("PlacementConfig"))
@@ -152,6 +153,7 @@ local function setupDropper(model)
 			folder.Parent = Workspace
 		end
 		local dough = makeDough()
+		dough:SetAttribute("OwnerUserId", player.UserId)
 		local dropCF = s.CFrame * CFrame.new(1.2, 0, 0)
 		if dough:IsA("Model") then
 			dough:PivotTo(dropCF)
@@ -160,7 +162,8 @@ local function setupDropper(model)
 			dough.AssemblyLinearVelocity = s.CFrame.RightVector * 4 + Vector3.new(0, 4, 0)
 		end
 		dough.Parent = folder
-		Debris:AddItem(dough, 45)
+		-- No flat despawn timer: the client ItemLifetime removes dough only once it's abandoned off
+		-- the line; a leaving owner's dough is swept in Start. Keeps on-belt / on-machine dough alive.
 	end)
 end
 
@@ -416,6 +419,31 @@ function PlacementService.Start()
 	deleteR.OnServerEvent:Connect(function(player, target)
 		local ok, reason = PlacementService.tryDelete(player, target)
 		resultR:FireClient(player, ok, reason, "delete")
+	end)
+
+	-- Dropped-dough cleanup. The client (ItemLifetime) requests removal of dough it has judged
+	-- abandoned; we only honor it for the Dough tag + matching owner, so it can never touch a placed
+	-- machine. A leaving player's leftover dough is swept here too.
+	local despawnR = ensure("RequestDespawn")
+	despawnR.OnServerEvent:Connect(function(player, item)
+		if
+			typeof(item) == "Instance"
+			and CollectionService:HasTag(item, "Dough")
+			and item:GetAttribute("OwnerUserId") == player.UserId
+		then
+			item:Destroy()
+		end
+	end)
+
+	Players.PlayerRemoving:Connect(function(leaving)
+		local folder = Workspace:FindFirstChild("DroppedDough")
+		if folder then
+			for _, item in ipairs(folder:GetChildren()) do
+				if item:GetAttribute("OwnerUserId") == leaving.UserId then
+					item:Destroy()
+				end
+			end
+		end
 	end)
 end
 
