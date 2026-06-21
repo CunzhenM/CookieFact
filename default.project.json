@@ -24,6 +24,9 @@
       },
       "PlacementOverrides": {
         "$path": "src/placement/PlacementOverrides.server.luau"
+      },
+      "DropperMachine": {
+        "$path": "src/placement/DropperMachine.server.luau"
       }
     },
 
