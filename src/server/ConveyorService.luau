@@ -115,6 +115,20 @@ local function getFlowDirection(belt: BasePart, position: Vector3): Vector3
 	if waypoints then
 		return pathFlow(waypoints, flat(position))
 	end
+	-- Tilted belt (a ramp): follow the slope via the two Direction markers (Direction0 -> Direction1),
+	-- keeping the Y component so items ride up/down. Flat straights use -LookVector below.
+	if math.abs(belt.CFrame.UpVector.Y) < 0.98 then
+		local model = belt.Parent
+		local m0 = model and model:FindFirstChild("Direction0")
+		local m1 = model and model:FindFirstChild("Direction1")
+		if m0 and m1 and m0:IsA("BasePart") and m1:IsA("BasePart") then
+			local dir = m1.Position - m0.Position
+			if dir.Magnitude > 1e-4 then
+				return dir.Unit
+			end
+		end
+		return -belt.CFrame.LookVector
+	end
 	return -belt.CFrame.LookVector
 end
 
@@ -145,7 +159,10 @@ local function conveyBelt(belt: BasePart, alpha: number, seen: { [BasePart]: boo
 			speed += (SPEED - speed) * alpha
 			rampSpeed[part] = speed
 			local v = part.AssemblyLinearVelocity
-			part.AssemblyLinearVelocity = Vector3.new(flow.X * speed, v.Y, flow.Z * speed)
+			-- On a ramp (sloped flow) drive the full 3D velocity so gravity can't drag the item back
+			-- down the incline; on flat belts keep the item's own vertical velocity (rest/gravity).
+			local vy = if math.abs(flow.Y) > 0.05 then flow.Y * speed else v.Y
+			part.AssemblyLinearVelocity = Vector3.new(flow.X * speed, vy, flow.Z * speed)
 		end
 	end
 end

@@ -154,7 +154,10 @@ local function step(root: Instance, body: Body, dt: number)
 		local belt = beltUnder(root)
 		if belt then
 			local flow = ConveyorFlow.getFlowDirection(belt, center)
-			local delta = Vector3.new(flow.X, 0, flow.Z) * CONVEY_SPEED * dt
+			-- Full 3D so the body rides ramps up/down (flat belts have ~0 Y here). It's conveyed by
+			-- PivotTo with no gravity, so on an incline it stays on the belt instead of sliding off; it
+			-- landed flush via stickToSurface, so the translate keeps it parallel to the belt.
+			local delta = flow * (CONVEY_SPEED * dt)
 			if delta.Magnitude > 1e-6 then
 				root:PivotTo(root:GetPivot() + delta)
 			end

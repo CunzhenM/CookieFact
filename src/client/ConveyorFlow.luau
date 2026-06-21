@@ -90,6 +90,21 @@ function ConveyorFlow.getFlowDirection(belt: BasePart, position: Vector3): Vecto
 	if waypoints then
 		return pathFlow(waypoints, flat(position))
 	end
+	-- Tilted belt (a ramp): follow the slope via the two Direction markers (Direction0 -> Direction1),
+	-- so items ride up/down with the incline instead of being pushed flat. The returned vector keeps
+	-- its Y. Flat straights fall through to the simple -LookVector below.
+	if math.abs(belt.CFrame.UpVector.Y) < 0.98 then
+		local model = belt.Parent
+		local m0 = model and model:FindFirstChild("Direction0")
+		local m1 = model and model:FindFirstChild("Direction1")
+		if m0 and m1 and m0:IsA("BasePart") and m1:IsA("BasePart") then
+			local dir = m1.Position - m0.Position
+			if dir.Magnitude > 1e-4 then
+				return dir.Unit
+			end
+		end
+		return -belt.CFrame.LookVector
+	end
 	return -belt.CFrame.LookVector
 end
 

@@ -15,7 +15,7 @@ local Shared = ReplicatedStorage:WaitForChild("PlacementShared")
 local PlacementConfig = require(Shared:WaitForChild("PlacementConfig"))
 local GridUtil = require(Shared:WaitForChild("GridUtil"))
 
-local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true }
+local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true, RampUpConveyor = true, RampDownConveyor = true }
 
 -- ===== center a placed conveyor's belt on its cell =====
 
