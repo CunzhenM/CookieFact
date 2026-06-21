@@ -289,9 +289,17 @@ function PlacementService.tryPlace(player, machineId, cx, cz, rot, skipCharge)
 		occupied[plot] = occ
 	end
 	local keys = GridUtil.occupiedKeys(cx, cz, efpx, efpz)
+	-- Stacking: a machine may be placed ON TOP of a Support Block (or a stack of them). Any other
+	-- occupant still blocks. supportBelow is the support we'll seat the new machine onto.
+	local supportBelow = nil
 	for _, k in ipairs(keys) do
-		if occ[k] then
-			return false, "Space occupied"
+		local occupant = occ[k]
+		if occupant then
+			if occupant:GetAttribute("MachineId") == "SupportBlock" then
+				supportBelow = occupant
+			else
+				return false, "Space occupied"
+			end
 		end
 	end
 
@@ -299,12 +307,21 @@ function PlacementService.tryPlace(player, machineId, cx, cz, rot, skipCharge)
 		return false, "Not enough Coins"
 	end
 
+	-- Seat on the support block's top when stacking, otherwise on the plot surface.
+	local surfaceTop = plot.Position.Y + plot.Size.Y / 2
+	if supportBelow then
+		local sCf, sSize = supportBelow:GetBoundingBox()
+		surfaceTop = sCf.Position.Y + sSize.Y / 2
+	end
 	local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, machine.height, rot)
 	local container = buildMachineVisual(machine)
 	positionContainer(container, cf)
 	if container:IsA("Model") then
-		seatModelOnSurface(container, plot.Position.Y + plot.Size.Y / 2)
+		seatModelOnSurface(container, surfaceTop)
 		centerBeltOnCell(container, cf)
+	elseif supportBelow then
+		local p = container.Position
+		container.Position = Vector3.new(p.X, surfaceTop + machine.height / 2, p.Z)
 	end
 	container:SetAttribute("MachineId", machineId)
 	container:SetAttribute("OwnerUserId", player.UserId)

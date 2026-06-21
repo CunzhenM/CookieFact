@@ -174,7 +174,8 @@ local function buildOccupancy(placed)
 		local mcz = c:GetAttribute("CellZ")
 		local mrot = c:GetAttribute("Rot") or 0
 		local m = (type(id) == "string") and PlacementConfig.getMachine(id) or nil
-		if m and mcx and mcz then
+		-- Support Blocks don't block their cell -- you're allowed to place a machine on top of one.
+		if m and mcx and mcz and id ~= "SupportBlock" then
 			local fx, fz = GridUtil.rotatedFootprint(m.footprint[1], m.footprint[2], mrot)
 			for _, k in ipairs(GridUtil.occupiedKeys(mcx, mcz, fx, fz)) do
 				occ[k] = true
