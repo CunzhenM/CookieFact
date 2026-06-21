@@ -213,11 +213,20 @@ local function updateGhost(dt)
 		cz = math.clamp(cz, 0, nz - efpz)
 		lastCX, lastCZ = cx, cz
 		ghostTargetCF = GridUtil.blockCFrame(area, cx, cz, efpx, efpz, machine.height, rotSteps)
-		-- Preserve a model's built-in tilt (ramps) in the preview instead of snapping it flat.
+		-- Tilted models (ramps): preview them EXACTLY as placed -- keep the tilt, seat the bottom on
+		-- the plot surface (ramps sit on the ground), and center the bounding box on the cell.
 		local gm = Shared:FindFirstChild("GhostModels")
 		local gt = gm and gm:FindFirstChild(machine.id)
-		if gt and math.abs(gt:GetPivot().UpVector.Y) < 0.98 then
-			ghostTargetCF = CFrame.new(ghostTargetCF.Position) * CFrame.Angles(0, math.rad(90 * rotSteps), 0) * gt:GetPivot().Rotation
+		if ghost and gt and math.abs(gt:GetPivot().UpVector.Y) < 0.98 then
+			local oriented = CFrame.new(ghostTargetCF.Position) * CFrame.Angles(0, math.rad(90 * rotSteps), 0) * gt:GetPivot().Rotation
+			ghost:PivotTo(oriented)
+			local bbCF, bbSize = ghost:GetBoundingBox()
+			local surface = area.Position.Y + area.Size.Y / 2
+			ghostTargetCF = oriented + Vector3.new(
+				ghostTargetCF.Position.X - bbCF.Position.X,
+				surface - (bbCF.Position.Y - bbSize.Y / 2),
+				ghostTargetCF.Position.Z - bbCF.Position.Z
+			)
 		end
 		local occ = buildOccupancy(getPlaced())
 		local overlap = cellsConflict(occ, cx, cz, efpx, efpz)

@@ -68,22 +68,27 @@ local function fixRamp(model: Instance)
 	local mm = Shared:FindFirstChild("MachineModels")
 	local id = model:GetAttribute("MachineId")
 	local template = mm and typeof(id) == "string" and mm:FindFirstChild(id) or nil
-	local belt = findBelt(model)
 	local plot = plotOf(model)
-	if not (template and belt and plot) then
+	if not (template and plot) then
 		return
 	end
 	local rot = (model:GetAttribute("Rot") :: number?) or 0
+	-- 1) exact template tilt, turned by the placement yaw
 	model:PivotTo(CFrame.new(model:GetPivot().Position) * CFrame.Angles(0, math.rad(90 * rot), 0) * template:GetPivot().Rotation)
-	model:PivotTo(model:GetPivot() + Vector3.new(0, (plot.Position.Y + plot.Size.Y / 2 + 2.5) - (belt.Position.Y + belt.Size.Y / 2), 0))
+	-- 2) seat the model's BOTTOM on the plot surface (ramp touches the ground; supports provide
+	--    elevation) and center its bounding box on the cell -- bbox-based so the tilt can't skew it.
 	local m = PlacementConfig.getMachine(id)
 	local cx = model:GetAttribute("CellX")
 	local cz = model:GetAttribute("CellZ")
+	local bbCF, bbSize = model:GetBoundingBox()
+	local dx, dz = 0, 0
 	if m and typeof(cx) == "number" and typeof(cz) == "number" then
 		local efpx, efpz = GridUtil.rotatedFootprint(m.footprint[1], m.footprint[2], rot)
 		local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, m.height, rot)
-		model:PivotTo(model:GetPivot() + Vector3.new(cf.Position.X - belt.Position.X, 0, cf.Position.Z - belt.Position.Z))
+		dx, dz = cf.Position.X - bbCF.Position.X, cf.Position.Z - bbCF.Position.Z
 	end
+	local surface = plot.Position.Y + plot.Size.Y / 2
+	model:PivotTo(model:GetPivot() + Vector3.new(dx, surface - (bbCF.Position.Y - bbSize.Y / 2), dz))
 end
 
 local function onPlacedMachine(model: Instance)
