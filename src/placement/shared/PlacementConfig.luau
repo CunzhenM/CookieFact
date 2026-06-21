@@ -64,6 +64,9 @@ PlacementConfig.Machines = {
 	{ id = "Oven", label = "Oven", cost = 120, color = Color3.fromRGB(205, 80, 60), footprint = { 2, 1 }, height = 6 },
 	{ id = "Packer", label = "Packer", cost = 200, color = Color3.fromRGB(170, 120, 220), footprint = { 1, 1 }, height = 5 },
 	{ id = "Seller", label = "Seller", cost = 300, color = Color3.fromRGB(95, 200, 120), footprint = { 2, 2 }, height = 4 },
+	{ id = "RampUpConveyor", label = "Ramp Up", cost = 25, color = Color3.fromRGB(85, 85, 90), footprint = { 1, 1 }, height = 3.4 },
+	{ id = "RampDownConveyor", label = "Ramp Down", cost = 25, color = Color3.fromRGB(85, 85, 90), footprint = { 1, 1 }, height = 3.4 },
+	{ id = "SupportBlock", label = "Support Block", cost = 10, color = Color3.fromRGB(125, 110, 95), footprint = { 1, 1 }, height = 2 },
 }
 
 function PlacementConfig.getMachine(id)
