@@ -103,7 +103,15 @@ local function onPlacedMachine(model: Instance)
 		end)
 	elseif typeof(id) == "string" and RAMPS[id] then
 		task.spawn(function()
-			task.wait(0.6)
+			-- Wait out the partner's staggered BuildAnimation: its per-part tweens snap each part
+			-- back to the captured FLAT pose, so tilting before they finish leaves parts displaced.
+			local n = 0
+			for _, d in ipairs(model:GetDescendants()) do
+				if d:IsA("BasePart") then
+					n += 1
+				end
+			end
+			task.wait(PlacementConfig.BuildTweenTime + n * PlacementConfig.BuildStagger + 0.2)
 			fixRamp(model)
 		end)
 	end
