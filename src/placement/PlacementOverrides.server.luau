@@ -61,9 +61,22 @@ local function centerConveyor(model: Instance)
 	end
 end
 
+-- Lowest world-Y point of a tagged belt slab (its low-end edge). Used to seat a ramp so its belt
+-- starts at floor level. Falls back to the model's bbox bottom if there's no tagged belt.
+local function lowestBeltY(model: Instance): number
+	local belt = findBelt(model)
+	if belt then
+		local cf, s = belt.CFrame, belt.Size
+		local extentY = 0.5 * (math.abs(cf.RightVector.Y) * s.X + math.abs(cf.UpVector.Y) * s.Y + math.abs(cf.LookVector.Y) * s.Z)
+		return belt.Position.Y - extentY
+	end
+	local bbCF, bbSize = model:GetBoundingBox()
+	return bbCF.Position.Y - bbSize.Y / 2
+end
+
 -- Ramps are built tilted in their MODEL PIVOT (e.g. 33deg about X); the partner's
 -- PivotTo(blockCFrame) snaps the pivot flat, flattening the ramp. Restore the template's exact
--- pivot rotation (turned by the placement yaw), then re-seat + re-center the belt on the cell.
+-- pivot rotation (turned by the placement yaw), then seat the belt's low end on the floor + center.
 local function fixRamp(model: Instance)
 	local mm = Shared:FindFirstChild("MachineModels")
 	local id = model:GetAttribute("MachineId")
@@ -75,12 +88,12 @@ local function fixRamp(model: Instance)
 	local rot = (model:GetAttribute("Rot") :: number?) or 0
 	-- 1) exact template tilt, turned by the placement yaw
 	model:PivotTo(CFrame.new(model:GetPivot().Position) * CFrame.Angles(0, math.rad(90 * rot), 0) * template:GetPivot().Rotation)
-	-- 2) seat the model's BOTTOM on the plot surface (ramp touches the ground; supports provide
-	--    elevation) and center its bounding box on the cell -- bbox-based so the tilt can't skew it.
+	-- 2) center the bounding box on the cell, and seat the BELT's low end on the plot surface so the
+	--    belt starts at floor level (supports provide the elevation for the high end).
 	local m = PlacementConfig.getMachine(id)
 	local cx = model:GetAttribute("CellX")
 	local cz = model:GetAttribute("CellZ")
-	local bbCF, bbSize = model:GetBoundingBox()
+	local bbCF = model:GetBoundingBox()
 	local dx, dz = 0, 0
 	if m and typeof(cx) == "number" and typeof(cz) == "number" then
 		local efpx, efpz = GridUtil.rotatedFootprint(m.footprint[1], m.footprint[2], rot)
@@ -88,7 +101,7 @@ local function fixRamp(model: Instance)
 		dx, dz = cf.Position.X - bbCF.Position.X, cf.Position.Z - bbCF.Position.Z
 	end
 	local surface = plot.Position.Y + plot.Size.Y / 2
-	model:PivotTo(model:GetPivot() + Vector3.new(dx, surface - (bbCF.Position.Y - bbSize.Y / 2), dz))
+	model:PivotTo(model:GetPivot() + Vector3.new(dx, surface - lowestBeltY(model), dz))
 end
 
 local function onPlacedMachine(model: Instance)
