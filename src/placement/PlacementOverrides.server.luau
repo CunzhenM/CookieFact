@@ -15,7 +15,8 @@ local Shared = ReplicatedStorage:WaitForChild("PlacementShared")
 local PlacementConfig = require(Shared:WaitForChild("PlacementConfig"))
 local GridUtil = require(Shared:WaitForChild("GridUtil"))
 
-local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true, RampUpConveyor = true, RampDownConveyor = true }
+local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true }
+local RAMPS = { RampUpConveyor = true, RampDownConveyor = true }
 
 -- ===== center a placed conveyor's belt on its cell =====
 
@@ -60,6 +61,31 @@ local function centerConveyor(model: Instance)
 	end
 end
 
+-- Ramps are built tilted in their MODEL PIVOT (e.g. 33deg about X); the partner's
+-- PivotTo(blockCFrame) snaps the pivot flat, flattening the ramp. Restore the template's exact
+-- pivot rotation (turned by the placement yaw), then re-seat + re-center the belt on the cell.
+local function fixRamp(model: Instance)
+	local mm = Shared:FindFirstChild("MachineModels")
+	local id = model:GetAttribute("MachineId")
+	local template = mm and typeof(id) == "string" and mm:FindFirstChild(id) or nil
+	local belt = findBelt(model)
+	local plot = plotOf(model)
+	if not (template and belt and plot) then
+		return
+	end
+	local rot = (model:GetAttribute("Rot") :: number?) or 0
+	model:PivotTo(CFrame.new(model:GetPivot().Position) * CFrame.Angles(0, math.rad(90 * rot), 0) * template:GetPivot().Rotation)
+	model:PivotTo(model:GetPivot() + Vector3.new(0, (plot.Position.Y + plot.Size.Y / 2 + 2.5) - (belt.Position.Y + belt.Size.Y / 2), 0))
+	local m = PlacementConfig.getMachine(id)
+	local cx = model:GetAttribute("CellX")
+	local cz = model:GetAttribute("CellZ")
+	if m and typeof(cx) == "number" and typeof(cz) == "number" then
+		local efpx, efpz = GridUtil.rotatedFootprint(m.footprint[1], m.footprint[2], rot)
+		local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, m.height, rot)
+		model:PivotTo(model:GetPivot() + Vector3.new(cf.Position.X - belt.Position.X, 0, cf.Position.Z - belt.Position.Z))
+	end
+end
+
 local function onPlacedMachine(model: Instance)
 	if not model:IsA("Model") then
 		return
@@ -69,6 +95,11 @@ local function onPlacedMachine(model: Instance)
 		task.spawn(function()
 			task.wait(0.6) -- let the partner's seat + build-animation finish first
 			centerConveyor(model)
+		end)
+	elseif typeof(id) == "string" and RAMPS[id] then
+		task.spawn(function()
+			task.wait(0.6)
+			fixRamp(model)
 		end)
 	end
 end

@@ -213,6 +213,12 @@ local function updateGhost(dt)
 		cz = math.clamp(cz, 0, nz - efpz)
 		lastCX, lastCZ = cx, cz
 		ghostTargetCF = GridUtil.blockCFrame(area, cx, cz, efpx, efpz, machine.height, rotSteps)
+		-- Preserve a model's built-in tilt (ramps) in the preview instead of snapping it flat.
+		local gm = Shared:FindFirstChild("GhostModels")
+		local gt = gm and gm:FindFirstChild(machine.id)
+		if gt and math.abs(gt:GetPivot().UpVector.Y) < 0.98 then
+			ghostTargetCF = CFrame.new(ghostTargetCF.Position) * CFrame.Angles(0, math.rad(90 * rotSteps), 0) * gt:GetPivot().Rotation
+		end
 		local occ = buildOccupancy(getPlaced())
 		local overlap = cellsConflict(occ, cx, cz, efpx, efpz)
 		lastValid = (not overlap) and canAfford(machine.cost or 0)
