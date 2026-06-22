@@ -18,11 +18,11 @@ local GridUtil = require(Shared:WaitForChild("GridUtil"))
 local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true }
 local RAMPS = { RampUpConveyor = true, RampDownConveyor = true }
 
--- ===== keep the ramp template models correct on every server start =====
+-- ===== make sure the ramp template models exist on every server start =====
 -- The placement MachineModels (used by fixRamp) and preview GhostModels (used by the client) are not
--- Rojo-managed, so an unsaved Studio session can lose or stale them. Rebuild the ramp entries from the
--- Workspace originals every run: exact copy -> MachineModels, half-transparent copy -> GhostModels
--- (Direction markers stay invisible). Idempotent; only touches the ramp entries, never other machines.
+-- Rojo-managed, so an unsaved Studio session can lose them. Fill in any MISSING ramp entry from the
+-- Workspace originals (exact copy -> MachineModels, half-transparent copy -> GhostModels, Direction
+-- markers stay invisible). Present entries are left untouched so clients never see a replication gap.
 local function rebuildRampModels()
 	local function ensureFolder(name: string): Instance
 		local f = Shared:FindFirstChild(name)
@@ -38,31 +38,30 @@ local function rebuildRampModels()
 	for name in pairs(RAMPS) do
 		local template = Workspace:FindFirstChild(name)
 		if template and template:IsA("Model") then
-			local old = mm:FindFirstChild(name)
-			if old then
-				old:Destroy()
-			end
-			local m = template:Clone()
-			m.Name = name
-			for _, d in ipairs(m:GetDescendants()) do
-				if d:IsA("BasePart") then
-					d.Anchored = true
+			-- Only fill in a MISSING entry -- NEVER destroy+recreate a present one. Destroying it
+			-- replicates a brief gap to clients, and a ghost built in that window falls back to the
+			-- flat box (wrong direction + no snap) -- which looked like a random "sometimes weird".
+			if not mm:FindFirstChild(name) then
+				local m = template:Clone()
+				m.Name = name
+				for _, d in ipairs(m:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.Anchored = true
+					end
 				end
+				m.Parent = mm
 			end
-			m.Parent = mm
-			local oldGhost = gm:FindFirstChild(name)
-			if oldGhost then
-				oldGhost:Destroy()
-			end
-			local g = template:Clone()
-			g.Name = name
-			for _, d in ipairs(g:GetDescendants()) do
-				if d:IsA("BasePart") then
-					d.Anchored = true
-					d.Transparency = math.max(0.5, d.Transparency)
+			if not gm:FindFirstChild(name) then
+				local g = template:Clone()
+				g.Name = name
+				for _, d in ipairs(g:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.Anchored = true
+						d.Transparency = math.max(0.5, d.Transparency)
+					end
 				end
+				g.Parent = gm
 			end
-			g.Parent = gm
 		end
 	end
 end
