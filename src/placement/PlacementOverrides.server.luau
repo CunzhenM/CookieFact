@@ -18,6 +18,56 @@ local GridUtil = require(Shared:WaitForChild("GridUtil"))
 local CONVEYORS = { Conveyor = true, LeftConveyor = true, RightConveyor = true }
 local RAMPS = { RampUpConveyor = true, RampDownConveyor = true }
 
+-- ===== keep the ramp template models correct on every server start =====
+-- The placement MachineModels (used by fixRamp) and preview GhostModels (used by the client) are not
+-- Rojo-managed, so an unsaved Studio session can lose or stale them. Rebuild the ramp entries from the
+-- Workspace originals every run: exact copy -> MachineModels, half-transparent copy -> GhostModels
+-- (Direction markers stay invisible). Idempotent; only touches the ramp entries, never other machines.
+local function rebuildRampModels()
+	local function ensureFolder(name: string): Instance
+		local f = Shared:FindFirstChild(name)
+		if not f then
+			f = Instance.new("Folder")
+			f.Name = name
+			f.Parent = Shared
+		end
+		return f
+	end
+	local mm = ensureFolder("MachineModels")
+	local gm = ensureFolder("GhostModels")
+	for name in pairs(RAMPS) do
+		local template = Workspace:FindFirstChild(name)
+		if template and template:IsA("Model") then
+			local old = mm:FindFirstChild(name)
+			if old then
+				old:Destroy()
+			end
+			local m = template:Clone()
+			m.Name = name
+			for _, d in ipairs(m:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.Anchored = true
+				end
+			end
+			m.Parent = mm
+			local oldGhost = gm:FindFirstChild(name)
+			if oldGhost then
+				oldGhost:Destroy()
+			end
+			local g = template:Clone()
+			g.Name = name
+			for _, d in ipairs(g:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.Anchored = true
+					d.Transparency = math.max(0.5, d.Transparency)
+				end
+			end
+			g.Parent = gm
+		end
+	end
+end
+rebuildRampModels()
+
 -- ===== center a placed conveyor's belt on its cell =====
 
 local function plotOf(model: Instance): BasePart?
