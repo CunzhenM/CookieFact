@@ -159,7 +159,12 @@ local function step(root: Instance, body: Body, dt: number)
 			-- landed flush via stickToSurface, so the translate keeps it parallel to the belt.
 			local delta = flow * (CONVEY_SPEED * dt)
 			if delta.Magnitude > 1e-6 then
-				root:PivotTo(root:GetPivot() + delta)
+				-- Keep the body's underside flush with the belt it's on: parallel on a ramp, LEVEL once
+					-- it rolls onto a flat conveyor (eased so the level-out is smooth, not a snap).
+					local pivot = root:GetPivot()
+					local align = rotationBetween(pivot.UpVector, belt.CFrame.UpVector)
+					pivot = (CFrame.new(center) * CFrame.identity:Lerp(align, math.clamp(10 * dt, 0, 1)) * CFrame.new(-center)) * pivot
+					root:PivotTo(pivot + delta)
 			end
 			return
 		end

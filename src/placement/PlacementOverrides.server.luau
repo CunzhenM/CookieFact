@@ -74,9 +74,46 @@ local function lowestBeltY(model: Instance): number
 	return bbCF.Position.Y - bbSize.Y / 2
 end
 
+-- The surface a ramp should sit on: the top of a Support Block sharing its cell (so ramps stack on
+-- supports like other machines), else the plot floor.
+local function surfaceBelow(model: Instance, plot: BasePart): number
+	local floor = plot.Position.Y + plot.Size.Y / 2
+	local id = model:GetAttribute("MachineId")
+	local m = (typeof(id) == "string") and PlacementConfig.getMachine(id) or nil
+	local cx = model:GetAttribute("CellX")
+	local cz = model:GetAttribute("CellZ")
+	local placed = model.Parent
+	if not (m and placed and typeof(cx) == "number" and typeof(cz) == "number") then
+		return floor
+	end
+	local rot = (model:GetAttribute("Rot") :: number?) or 0
+	local efpx, efpz = GridUtil.rotatedFootprint(m.footprint[1], m.footprint[2], rot)
+	local want = {}
+	for _, k in ipairs(GridUtil.occupiedKeys(cx, cz, efpx, efpz)) do
+		want[k] = true
+	end
+	local sm = PlacementConfig.getMachine("SupportBlock")
+	for _, c in ipairs(placed:GetChildren()) do
+		if c ~= model and sm and c:GetAttribute("MachineId") == "SupportBlock" then
+			local scx = c:GetAttribute("CellX")
+			local scz = c:GetAttribute("CellZ")
+			if typeof(scx) == "number" and typeof(scz) == "number" then
+				local sfx, sfz = GridUtil.rotatedFootprint(sm.footprint[1], sm.footprint[2], (c:GetAttribute("Rot") :: number?) or 0)
+				for _, k in ipairs(GridUtil.occupiedKeys(scx, scz, sfx, sfz)) do
+					if want[k] then
+						local cf, size = c:GetBoundingBox()
+						return cf.Position.Y + size.Y / 2
+					end
+				end
+			end
+		end
+	end
+	return floor
+end
+
 -- Ramps are built tilted in their MODEL PIVOT (e.g. 33deg about X); the partner's
 -- PivotTo(blockCFrame) snaps the pivot flat, flattening the ramp. Restore the template's exact
--- pivot rotation (turned by the placement yaw), then seat the belt's low end on the floor + center.
+-- pivot rotation (turned by the placement yaw), then seat the belt's low end on the surface below.
 local function fixRamp(model: Instance)
 	local mm = Shared:FindFirstChild("MachineModels")
 	local id = model:GetAttribute("MachineId")
@@ -88,8 +125,8 @@ local function fixRamp(model: Instance)
 	local rot = (model:GetAttribute("Rot") :: number?) or 0
 	-- 1) exact template tilt, turned by the placement yaw
 	model:PivotTo(CFrame.new(model:GetPivot().Position) * CFrame.Angles(0, math.rad(90 * rot), 0) * template:GetPivot().Rotation)
-	-- 2) center the bounding box on the cell, and seat the BELT's low end on the plot surface so the
-	--    belt starts at floor level (supports provide the elevation for the high end).
+	-- 2) center the bounding box on the cell, and seat the BELT's low end on the surface below (the
+	--    plot floor, or a Support Block's top when stacking) so the belt starts at that level.
 	local m = PlacementConfig.getMachine(id)
 	local cx = model:GetAttribute("CellX")
 	local cz = model:GetAttribute("CellZ")
@@ -100,7 +137,7 @@ local function fixRamp(model: Instance)
 		local cf = GridUtil.blockCFrame(plot, cx, cz, efpx, efpz, m.height, rot)
 		dx, dz = cf.Position.X - bbCF.Position.X, cf.Position.Z - bbCF.Position.Z
 	end
-	local surface = plot.Position.Y + plot.Size.Y / 2
+	local surface = surfaceBelow(model, plot)
 	model:PivotTo(model:GetPivot() + Vector3.new(dx, surface - lowestBeltY(model), dz))
 end
 
