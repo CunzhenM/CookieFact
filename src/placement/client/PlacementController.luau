@@ -273,7 +273,12 @@ local function updateGhost(dt)
 				ghostTargetCF = ghostTargetCF + Vector3.new(0, supTop - (area.Position.Y + area.Size.Y / 2), 0)
 			end
 		end
-		local occ = buildOccupancy(getPlaced())
+		-- Tilted (ramp) ghosts are re-oriented every frame above to measure the belt; that fights the
+			-- smoothing Lerp below and pins them near the floor, so jump them straight to the target.
+			if gt and math.abs(gt:GetPivot().UpVector.Y) < 0.98 then
+				ghost:PivotTo(ghostTargetCF)
+			end
+			local occ = buildOccupancy(getPlaced())
 		local overlap = cellsConflict(occ, cx, cz, efpx, efpz)
 		lastValid = (not overlap) and canAfford(machine.cost or 0)
 		paintGhost(lastValid)
