@@ -25,7 +25,7 @@ local SKIN = 0.05 -- small gap kept from surfaces to avoid clipping
 local MAX_STEP = 1 / 30 -- clamp dt so a frame hitch can't tunnel the body through the floor
 local KILL_Y = -500 -- give up simulating anything that falls into the void
 
-type Body = { velocity: Vector3, grounded: boolean, gravityScale: number, conveying: boolean? }
+type Body = { velocity: Vector3, grounded: boolean, gravityScale: number, conveying: boolean?, lastFlow: Vector3? }
 local bodies: { [Instance]: Body } = {}
 
 -- Callbacks fired (with the root) the moment a body settles and goes to sleep.
@@ -154,6 +154,7 @@ local function step(root: Instance, body: Body, dt: number)
 		local belt = beltUnder(root)
 		if belt then
 			local flow = ConveyorFlow.getFlowDirection(belt, center)
+				body.lastFlow = flow
 			-- Full 3D so the body rides ramps up/down (flat belts have ~0 Y here). It's conveyed by
 			-- PivotTo with no gravity, so on an incline it stays on the belt instead of sliding off; it
 			-- landed flush via stickToSurface, so the translate keeps it parallel to the belt.
@@ -168,9 +169,10 @@ local function step(root: Instance, body: Body, dt: number)
 			end
 			return
 		end
-		-- Rolled off the belt: drop back into gravity so it settles on whatever comes next.
+		-- Rolled off the END of a belt with nothing to catch it: carry the belt's momentum off the lip
+		-- (a little push) so it falls, instead of teetering on the edge / re-sticking / piling up.
 		body.conveying = false
-		body.velocity = Vector3.zero
+		body.velocity = (body.lastFlow or Vector3.zero) * CONVEY_SPEED
 	end
 
 	-- Integrate gravity (matches the engine, optionally lightened) and a touch of air drag.
@@ -210,7 +212,18 @@ function FauxPhysics.Start()
 	-- unanchored.
 	local function consider(inst: Instance)
 		if (inst:IsA("Model") or inst:IsA("BasePart")) and FauxPhysics.IsFaux(inst) then
-			FauxPhysics.Launch(inst, Vector3.zero)
+			-- Non-collidable so dough never piles up on other dough (the swept cast ignores
+				-- non-collidable hits); a clog at a belt's end falls past instead of stacking.
+				if inst:IsA("BasePart") then
+					inst.CanCollide = false
+				else
+					for _, d in ipairs(inst:GetDescendants()) do
+						if d:IsA("BasePart") then
+							d.CanCollide = false
+						end
+					end
+				end
+				FauxPhysics.Launch(inst, Vector3.zero)
 		end
 	end
 	for _, inst in ipairs(CollectionService:GetTagged(DragConfig.Tag)) do
