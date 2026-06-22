@@ -116,15 +116,28 @@ local function onPlacedMachine(model: Instance)
 		end)
 	elseif typeof(id) == "string" and RAMPS[id] then
 		task.spawn(function()
-			-- Wait out the partner's staggered BuildAnimation: its per-part tweens snap each part
-			-- back to the captured FLAT pose, so tilting before they finish leaves parts displaced.
-			local n = 0
-			for _, d in ipairs(model:GetDescendants()) do
-				if d:IsA("BasePart") then
-					n += 1
+			-- Wait until the partner's BuildAnimation has FULLY settled before tilting. Its staggered
+			-- per-part tweens snap each part back to the flat captured pose; a fixed timer races them
+			-- (under load the belt ends up barely tilted -> flat-fallback flow sends items downhill), so
+			-- poll the bounding box until it stops moving instead.
+			local lastCF, lastSize = model:GetBoundingBox()
+			local stable = 0
+			for _ = 1, 160 do
+				task.wait(0.05)
+				if not model.Parent then
+					return
 				end
+				local cf, size = model:GetBoundingBox()
+				if (cf.Position - lastCF.Position).Magnitude < 1e-3 and (size - lastSize).Magnitude < 1e-3 then
+					stable += 1
+					if stable >= 4 then
+						break
+					end
+				else
+					stable = 0
+				end
+				lastCF, lastSize = cf, size
 			end
-			task.wait(PlacementConfig.BuildTweenTime + n * PlacementConfig.BuildStagger + 0.2)
 			fixRamp(model)
 		end)
 	end

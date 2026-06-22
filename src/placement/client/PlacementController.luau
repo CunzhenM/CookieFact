@@ -194,6 +194,35 @@ local function cellsConflict(occ, cx, cz, efpx, efpz)
 	return false
 end
 
+-- Top Y of a Support Block whose footprint overlaps the given cells (or nil), so the ghost can
+-- preview snapping onto it -- matches the server's stacking seat in tryPlace.
+local function supportTopAt(placed, cx, cz, efpx, efpz)
+	if not placed then
+		return nil
+	end
+	local want = {}
+	for _, k in ipairs(GridUtil.occupiedKeys(cx, cz, efpx, efpz)) do
+		want[k] = true
+	end
+	for _, c in ipairs(placed:GetChildren()) do
+		if c:GetAttribute("MachineId") == "SupportBlock" then
+			local scx = c:GetAttribute("CellX")
+			local scz = c:GetAttribute("CellZ")
+			local sm = PlacementConfig.getMachine("SupportBlock")
+			if sm and typeof(scx) == "number" and typeof(scz) == "number" then
+				local fx, fz = GridUtil.rotatedFootprint(sm.footprint[1], sm.footprint[2], c:GetAttribute("Rot") or 0)
+				for _, k in ipairs(GridUtil.occupiedKeys(scx, scz, fx, fz)) do
+					if want[k] then
+						local cf, size = c:GetBoundingBox()
+						return cf.Position.Y + size.Y / 2
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local function updateGhost(dt)
 	local area = getArea()
 	local machine = selectedId and PlacementConfig.getMachine(selectedId)
@@ -236,6 +265,13 @@ local function updateGhost(dt)
 				surface - lowY,
 				ghostTargetCF.Position.Z - bbCF.Position.Z
 			)
+		end
+		-- Snap the preview ONTO a support block when hovering over one (machines stack on supports).
+		if machine.id ~= "SupportBlock" then
+			local supTop = supportTopAt(getPlaced(), cx, cz, efpx, efpz)
+			if supTop then
+				ghostTargetCF = ghostTargetCF + Vector3.new(0, supTop - (area.Position.Y + area.Size.Y / 2), 0)
+			end
 		end
 		local occ = buildOccupancy(getPlaced())
 		local overlap = cellsConflict(occ, cx, cz, efpx, efpz)
